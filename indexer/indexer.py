@@ -11,7 +11,7 @@ from qdrant_client import QdrantClient
 from langchain_qdrant import QdrantVectorStore
 from langchain_huggingface import HuggingFaceEmbeddings
 from qdrant_client.http.models import Distance, VectorParams, Filter, FieldCondition, MatchValue
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from langchain_community.document_loaders import (
     TextLoader,
@@ -40,6 +40,15 @@ class Config:
         ".txt": TextLoader,
         ".md": TextLoader,
         ".csv": CSVLoader,
+        # Code files (use TextLoader)
+        ".py": TextLoader,
+        ".js": TextLoader,
+        ".java": TextLoader,
+        ".cpp": TextLoader,
+        ".c": TextLoader,
+        ".h": TextLoader,
+        ".hpp": TextLoader,
+        ".rs": TextLoader,
     }
     
     DEVICE = torch.device(

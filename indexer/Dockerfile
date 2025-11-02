@@ -4,12 +4,13 @@ WORKDIR /usr/src/app
 RUN pip install --upgrade pip
 
 ARG EMBEDDING_MODEL_ID
+ARG EMBEDDING_SIZE
 
-RUN pip install huggingface_hub
-RUN huggingface-cli download $EMBEDDING_MODEL_ID --repo-type model
-
+# Copy requirements and install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
 COPY . .
 
 ENV PORT 8000

@@ -17,16 +17,24 @@ services:
       QDRANT__LOG_LEVEL: "INFO"
 
   indexer:
-    build: 
+    build:
       context: ./indexer
       dockerfile: Dockerfile
       args:
         EMBEDDING_MODEL_ID: ${EMBEDDING_MODEL_ID}
         EMBEDDING_SIZE: ${EMBEDDING_SIZE}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     volumes:
       - ${LOCAL_FILES_PATH}:/usr/src/app/local_files/
       - ./indexer:/usr/src/app
       - ./indexer_data:/indexer/storage
+      - ../.cache:/root/.cache  # Reuse HuggingFace cache from host
     ports:
       - 8001:8000
     environment:

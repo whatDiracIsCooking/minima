@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 executor = ThreadPoolExecutor()
 
 CONTAINER_PATH = os.environ.get("CONTAINER_PATH")
-AVAILABLE_EXTENSIONS = [".pdf", ".xls", "xlsx", ".doc", ".docx", ".txt", ".md", ".csv", ".ppt", ".pptx"]
+AVAILABLE_EXTENSIONS = [".pdf", ".xls", ".xlsx", ".doc", ".docx", ".txt", ".md", ".csv", ".ppt", ".pptx", ".py", ".js", ".java", ".cpp", ".c", ".h", ".hpp", ".rs"]
 
 
 async def crawl_loop(async_queue):
