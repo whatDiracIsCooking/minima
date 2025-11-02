@@ -7,13 +7,47 @@ Quick reference for running your local RAG system with Qdrant + Minima.
 ## First Time Setup
 
 ```bash
-cd /home/lostica/projects/mcp_rag/minima
+cd /path/to/minima
 
 # Build and start everything (takes ~5 min first time)
 docker compose -f docker-compose-mcp.yml up --build
 ```
 
 **Wait for:** `"all files indexed"` message in logs.
+
+---
+
+## Initial Indexing
+
+**First time only:** After starting services, wait for indexing to complete.
+
+### Watch the indexing progress:
+
+```bash
+# Follow indexer logs
+docker compose -f docker-compose-mcp.yml logs -f indexer
+```
+
+You'll see:
+```
+indexer-1  | INFO: Loading embedding model: all-mpnet-base-v2
+indexer-1  | INFO: Processing file: /usr/src/app/local_files/chunker.py
+indexer-1  | INFO: Successfully processed 15 documents from chunker.py
+indexer-1  | INFO: Added 15 vectors. Total: 15
+...
+indexer-1  | INFO: No files to index. Indexing stopped, all files indexed.
+```
+
+### Verify indexing completed:
+
+```bash
+# Check how many vectors were indexed
+curl http://localhost:6333/collections/mnm_storage | jq '.result.points_count'
+```
+
+Should return a number > 0.
+
+**Once you see "all files indexed", the system is ready to query!**
 
 ---
 
@@ -28,6 +62,8 @@ docker compose -f docker-compose-mcp.yml up
 # Start in background (daemon mode)
 docker compose -f docker-compose-mcp.yml up -d
 ```
+
+**Note:** Subsequent starts are fast since data is already indexed.
 
 ### Stop Services
 
@@ -85,7 +121,7 @@ curl -X POST http://localhost:8001/query \
 
 ```bash
 # Copy files to your docs directory
-cp new_doc.pdf /home/lostica/projects/mcp_rag/test_docs/
+cp new_doc.pdf /path/to/your/test_docs/
 
 # Wait 20 minutes (auto-indexing) OR restart indexer immediately:
 docker compose -f docker-compose-mcp.yml restart indexer
@@ -157,8 +193,8 @@ docker compose -f docker-compose-mcp.yml up --build
 Edit `.env` file:
 
 ```bash
-# Document location
-LOCAL_FILES_PATH=/home/lostica/projects/mcp_rag/test_docs
+# Document location (absolute path to your documents)
+LOCAL_FILES_PATH=/path/to/your/test_docs
 
 # Embedding model
 EMBEDDING_MODEL_ID=sentence-transformers/all-mpnet-base-v2
@@ -242,8 +278,80 @@ This avoids re-downloading the 400MB embedding model on rebuilds.
 
 ---
 
+## MCP Server Setup (Claude Code Integration)
+
+### Native Claude Code (Desktop)
+
+Add to your `~/.claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "minima": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/path/to/minima/mcp-server",
+        "run",
+        "minima"
+      ]
+    }
+  }
+}
+```
+
+Replace `/path/to/minima/mcp-server` with your actual path.
+
+### Containerized Claude Code
+
+**Required Changes:**
+
+**1. Docker run command - add host networking:**
+```bash
+docker run \
+  --add-host=host.docker.internal:host-gateway \
+  ...
+```
+
+This allows container to reach host's `localhost:8001`.
+
+**2. MCP configuration - set environment variable:**
+```json
+{
+  "mcpServers": {
+    "minima": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/path/to/minima/mcp-server",
+        "run",
+        "minima"
+      ],
+      "env": {
+        "MINIMA_INDEXER_HOST": "host.docker.internal"
+      }
+    }
+  }
+}
+```
+
+**3. Install dependencies in container:**
+```bash
+cd /path/to/minima/mcp-server
+uv sync
+```
+
+**Note:** The `requestor.py` already supports `MINIMA_INDEXER_HOST` env var:
+```python
+INDEXER_HOST = os.getenv("MINIMA_INDEXER_HOST", "localhost")
+REQUEST_DATA_URL = f"http://{INDEXER_HOST}:8001/query"
+```
+
+---
+
 ## See Also
 
 - **Full Guide:** `MINIMA_QDRANT_GUIDE.md` (comprehensive documentation)
+- **Container Setup:** `../CONTAINER_MINIMA_SETUP.md` (detailed container integration)
 - **Qdrant Docs:** https://qdrant.tech/documentation/
 - **Original Minima:** https://github.com/dmayboroda/minima
