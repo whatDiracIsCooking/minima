@@ -101,11 +101,36 @@ class Indexer:
                     distance=Distance.COSINE
                 ),
             )
-        self.qdrant.create_payload_index(
-            collection_name=self.config.QDRANT_COLLECTION,
-            field_name="fpath",
-            field_schema="keyword"
-        )
+
+        # Create payload indexes for filtering
+        payload_indexes = [
+            "fpath",
+            "metadata.file_ext",
+            "metadata.file_name",
+        ]
+
+        for field_name in payload_indexes:
+            try:
+                self.qdrant.create_payload_index(
+                    collection_name=self.config.QDRANT_COLLECTION,
+                    field_name=field_name,
+                    field_schema="keyword"
+                )
+                logger.info(f"Created payload index for {field_name}")
+            except Exception as e:
+                logger.info(f"Payload index for {field_name} may already exist: {e}")
+
+        # Create numeric indexes for chunk positions
+        try:
+            self.qdrant.create_payload_index(
+                collection_name=self.config.QDRANT_COLLECTION,
+                field_name="metadata.chunk_index",
+                field_schema="integer"
+            )
+            logger.info("Created payload index for metadata.chunk_index")
+        except Exception as e:
+            logger.info(f"Payload index for metadata.chunk_index may already exist: {e}")
+
         return QdrantVectorStore(
             client=self.qdrant,
             collection_name=self.config.QDRANT_COLLECTION,
@@ -128,15 +153,26 @@ class Indexer:
                 logger.warning(f"No documents loaded from {loader.file_path}")
                 return []
 
-            for doc in documents:
-                doc.metadata['file_path'] = loader.file_path
+            file_path = loader.file_path
+            file_ext = Path(file_path).suffix.lower()
+            total_chunks = len(documents)
+
+            # Add enhanced metadata to each chunk
+            for idx, doc in enumerate(documents):
+                doc.metadata.update({
+                    'file_path': file_path,
+                    'file_name': os.path.basename(file_path),
+                    'file_ext': file_ext,
+                    'chunk_index': idx,
+                    'total_chunks': total_chunks,
+                })
 
             uuids = [str(uuid.uuid4()) for _ in range(len(documents))]
             ids = self.document_store.add_documents(documents=documents, ids=uuids)
-            
+
             logger.info(f"Successfully processed {len(ids)} documents from {loader.file_path}")
             return ids
-            
+
         except Exception as e:
             logger.error(f"Error processing file {loader.file_path}: {str(e)}")
             return []
@@ -193,14 +229,14 @@ class Indexer:
         try:
             logger.info(f"Searching for: {query}")
             found = self.document_store.search(query, search_type="similarity")
-            
+
             if not found:
                 logger.info("No results found")
-                return {"links": set(), "output": ""}
+                return {"links": [], "output": ""}
 
             links = set()
             results = []
-            
+
             for item in found:
                 path = item.metadata["file_path"].replace(
                     self.config.CONTAINER_PATH,
@@ -210,10 +246,10 @@ class Indexer:
                 results.append(item.page_content)
 
             output = {
-                "links": links,
+                "links": list(links),  # Convert set to list for JSON serialization
                 "output": ". ".join(results)
             }
-            
+
             logger.info(f"Found {len(found)} results")
             return output
             

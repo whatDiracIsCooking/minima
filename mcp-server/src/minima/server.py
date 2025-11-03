@@ -85,12 +85,23 @@ async def call_tool(name, arguments: dict) -> list[TextContent]:
     if "error" in output:
         logging.error(output["error"])
         raise McpError(INTERNAL_ERROR, output["error"])
-    
-    logging.info(f"Get prompt: {output}")    
-    output = output['result']['output']
-    #links = output['result']['links']
+
+    logging.info(f"Get prompt: {output}")
+    result_data = output['result']
+    output_text = result_data['output']
+    links = result_data.get('links', [])
+
+    # Format response with sources
+    response_parts = []
+    if links:
+        links_formatted = "\n".join([f"- {link}" for link in links])
+        response_parts.append(f"**Sources ({len(links)}):**\n{links_formatted}")
+
+    response_parts.append(f"\n**Answer:**\n{output_text}")
+    full_response = "\n".join(response_parts)
+
     result = []
-    result.append(TextContent(type="text", text=output))
+    result.append(TextContent(type="text", text=full_response))
     return result
     
 @server.get_prompt()
