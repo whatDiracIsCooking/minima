@@ -14,15 +14,25 @@ REQUEST_HEADERS = {
     'Content-Type': 'application/json'
 }
 
-async def request_data(query):
-    payload = {
-        "query": query
-    }
+async def request_data(query: str, filters: dict = None):
+    """
+    Request data from indexer with optional filters.
+
+    Args:
+        query: Search query text
+        filters: Optional dict of filter parameters
+    """
+    payload = {"query": query}
+
+    # Add filters if provided
+    if filters:
+        payload.update(filters)
+
     async with httpx.AsyncClient() as client:
         try:
-            logger.info(f"Requesting data from indexer with query: {query}")
-            response = await client.post(REQUEST_DATA_URL, 
-                                         headers=REQUEST_HEADERS, 
+            logger.info(f"Requesting data with query: {query}, filters: {filters}")
+            response = await client.post(REQUEST_DATA_URL,
+                                         headers=REQUEST_HEADERS,
                                          json=payload)
             response.raise_for_status()
             data = response.json()

@@ -2,7 +2,8 @@ import nltk
 import logging
 import asyncio
 from indexer import Indexer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import List, Optional
 from storage import MinimaStore
 from async_queue import AsyncQueue
 from fastapi import FastAPI, APIRouter
@@ -32,15 +33,74 @@ class Query(BaseModel):
     query: str
 
 
+class QueryRequest(BaseModel):
+    """Enhanced query request with filtering support."""
+    query: str = Field(..., description="Search query text")
+
+    # File type filters
+    file_types: Optional[List[str]] = Field(
+        None,
+        description="Filter by file type: code, doc, data, spreadsheet, presentation"
+    )
+    file_extensions: Optional[List[str]] = Field(
+        None,
+        description="Filter by extension: .py, .pdf, .md, etc."
+    )
+
+    # Directory filters
+    directories: Optional[List[str]] = Field(
+        None,
+        description="Filter by directory path"
+    )
+
+    # Language filters (code files only)
+    languages: Optional[List[str]] = Field(
+        None,
+        description="Filter by language: python, javascript, java, etc."
+    )
+
+    # Temporal filters
+    modified_after: Optional[str] = Field(
+        None,
+        description="ISO timestamp - files modified after this date"
+    )
+    modified_before: Optional[str] = Field(
+        None,
+        description="ISO timestamp - files modified before this date"
+    )
+
+    # Chunk filters
+    max_chunk_index: Optional[int] = Field(
+        None,
+        description="Only return chunks up to this index (0 = first chunk only)"
+    )
+
+    # Result limits
+    limit: Optional[int] = Field(
+        10,
+        description="Maximum number of results to return"
+    )
+
+
 @router.post(
-    "/query", 
-    response_description='Query local data storage',
+    "/query",
+    response_description='Query local data storage with optional filtering',
 )
-async def query(request: Query):
-    logger.info(f"Received query: {query}")
+async def query(request: QueryRequest):
+    logger.info(f"Received query: {request.query}")
     try:
-        result = indexer.find(request.query)
-        logger.info(f"Found {len(result)} results for query: {query}")
+        result = indexer.find(
+            query=request.query,
+            file_types=request.file_types,
+            file_extensions=request.file_extensions,
+            directories=request.directories,
+            languages=request.languages,
+            modified_after=request.modified_after,
+            modified_before=request.modified_before,
+            max_chunk_index=request.max_chunk_index,
+            limit=request.limit
+        )
+        logger.info(f"Found {result.get('total_results', 0)} results for query: {request.query}")
         logger.info(f"Results: {result}")
         return {"result": result}
     except Exception as e:

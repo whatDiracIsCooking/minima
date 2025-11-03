@@ -33,7 +33,7 @@ server = Server("minima")
 
 class Query(BaseModel):
     text: Annotated[
-        str, 
+        str,
         Field(description="context to find")
     ]
 
@@ -42,8 +42,45 @@ async def list_tools() -> list[Tool]:
     return [
         Tool(
             name="minima-query",
-            description="Find a context in local files (PDF, CSV, DOCX, MD, TXT)",
-            inputSchema=Query.model_json_schema(),
+            description="Find context in local files with optional filtering by file type, language, date, etc.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "The search query"
+                    },
+                    "file_types": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Filter by file type: code, doc, data, spreadsheet, presentation"
+                    },
+                    "file_extensions": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Filter by extension: .py, .pdf, .md, etc."
+                    },
+                    "languages": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Filter by language: python, javascript, java, etc."
+                    },
+                    "directories": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Filter by directory path"
+                    },
+                    "max_chunk_index": {
+                        "type": "integer",
+                        "description": "Only return first N chunks (0 = first chunk only)"
+                    },
+                    "modified_after": {
+                        "type": "string",
+                        "description": "ISO timestamp - files modified after this date"
+                    }
+                },
+                "required": ["text"]
+            }
         )
     ]
     
@@ -69,19 +106,26 @@ async def call_tool(name, arguments: dict) -> list[TextContent]:
         raise ValueError(f"Unknown tool: {name}")
 
     logging.info("Calling tools")
-    try:
-        args = Query(**arguments)
-    except ValueError as e:
-        logging.error(str(e))
-        raise McpError(INVALID_PARAMS, str(e))
-        
-    context = args.text
-    logging.info(f"Context: {context}")
+
+    # Extract query and filters
+    context = arguments.get("text")
+    filters = {
+        "file_types": arguments.get("file_types"),
+        "file_extensions": arguments.get("file_extensions"),
+        "languages": arguments.get("languages"),
+        "directories": arguments.get("directories"),
+        "max_chunk_index": arguments.get("max_chunk_index"),
+        "modified_after": arguments.get("modified_after"),
+    }
+
+    # Remove None values
+    filters = {k: v for k, v in filters.items() if v is not None}
+
     if not context:
         logging.error("Context is required")
         raise McpError(INVALID_PARAMS, "Context is required")
 
-    output = await request_data(context)
+    output = await request_data(context, filters)
     if "error" in output:
         logging.error(output["error"])
         raise McpError(INTERNAL_ERROR, output["error"])
@@ -90,12 +134,29 @@ async def call_tool(name, arguments: dict) -> list[TextContent]:
     result_data = output['result']
     output_text = result_data['output']
     links = result_data.get('links', [])
+    metadata = result_data.get('metadata', [])
+    filters_applied = result_data.get('filters_applied', {})
 
-    # Format response with sources
+    # Format response with sources and metadata
     response_parts = []
+
+    # Show applied filters
+    if any(filters_applied.values()):
+        filters_text = ", ".join([f"{k}={v}" for k, v in filters_applied.items() if v])
+        response_parts.append(f"**Filters Applied:** {filters_text}")
+
+    # Show sources
     if links:
         links_formatted = "\n".join([f"- {link}" for link in links])
-        response_parts.append(f"**Sources ({len(links)}):**\n{links_formatted}")
+        response_parts.append(f"\n**Sources ({len(links)}):**\n{links_formatted}")
+
+    # Show metadata (first 3 results)
+    if metadata:
+        metadata_formatted = "\n".join([
+            f"- {m['file_name']} ({m['file_type']}, chunk {m['chunk']})"
+            for m in metadata[:3]
+        ])
+        response_parts.append(f"\n**Top Results:**\n{metadata_formatted}")
 
     response_parts.append(f"\n**Answer:**\n{output_text}")
     full_response = "\n".join(response_parts)
