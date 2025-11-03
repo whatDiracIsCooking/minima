@@ -102,10 +102,66 @@ docker compose -f docker-compose-mcp.yml logs -f indexer
 
 ### Via HTTP API
 
+**Basic Query:**
 ```bash
 curl -X POST http://localhost:8001/query \
   -H "Content-Type: application/json" \
   -d '{"query": "What is chunking?"}'
+```
+
+### Phase 2: Enhanced Queries with Filtering
+
+**Filter by File Type:**
+```bash
+curl -X POST http://localhost:8001/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "authentication",
+    "file_types": ["code"]
+  }'
+```
+
+**Filter by Language:**
+```bash
+curl -X POST http://localhost:8001/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "error handling",
+    "languages": ["python", "javascript"]
+  }'
+```
+
+**Filter by Date (Recent Files):**
+```bash
+curl -X POST http://localhost:8001/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "configuration",
+    "modified_after": "2025-10-01T00:00:00Z"
+  }'
+```
+
+**First Chunks Only (File Overviews):**
+```bash
+curl -X POST http://localhost:8001/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "module overview",
+    "max_chunk_index": 0
+  }'
+```
+
+**Combined Filters:**
+```bash
+curl -X POST http://localhost:8001/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "embedding",
+    "file_types": ["code"],
+    "languages": ["python"],
+    "max_chunk_index": 0,
+    "limit": 5
+  }'
 ```
 
 ### Via Browser
