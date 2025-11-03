@@ -5,6 +5,7 @@ langfuse
 langchain_qdrant
 langchain_community
 langchain-huggingface
+torch>=2.0.0
 sentence-transformers==2.6.0
 transformers
 asyncio==3.4.3
@@ -24,3 +25,10 @@ sqlmodel
 nltk
 unstructured
 python-pptx
+# AST Chunking dependencies
+astchunk>=0.1.0
+tree-sitter>=0.20.0
+tree-sitter-python>=0.20.0
+tree-sitter-java>=0.20.0
+tree-sitter-c-sharp>=0.20.0
+tree-sitter-typescript>=0.20.0

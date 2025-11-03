@@ -44,5 +44,7 @@ services:
       - EMBEDDING_MODEL_ID=${EMBEDDING_MODEL_ID}
       - EMBEDDING_SIZE=${EMBEDDING_SIZE}
       - CONTAINER_PATH=/usr/src/app/local_files/
+      - USE_AST_CHUNKING=${USE_AST_CHUNKING:-true}
+      - AST_CHUNK_SIZE=${AST_CHUNK_SIZE:-2000}
     depends_on:
       - qdrant

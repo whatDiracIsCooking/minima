@@ -69,6 +69,11 @@ class Config:
     CHUNK_SIZE = 500
     CHUNK_OVERLAP = 200
 
+    # AST Chunking Configuration
+    CODE_EXTENSIONS = {".py", ".java", ".cs", ".ts", ".tsx"}
+    AST_CHUNK_SIZE = 2000  # Non-whitespace characters per chunk
+    USE_AST_CHUNKING = os.environ.get("USE_AST_CHUNKING", "true").lower() == "true"
+
 class Indexer:
     def __init__(self):
         self.config = Config()
@@ -76,6 +81,7 @@ class Indexer:
         self.embed_model = self._initialize_embeddings()
         self.document_store = self._setup_collection()
         self.text_splitter = self._initialize_text_splitter()
+        self.ast_chunkers = self._initialize_ast_chunkers()
 
     def _initialize_qdrant(self) -> QdrantClient:
         return QdrantClient(host=self.config.QDRANT_BOOTSTRAP)
@@ -92,6 +98,42 @@ class Indexer:
             chunk_size=self.config.CHUNK_SIZE,
             chunk_overlap=self.config.CHUNK_OVERLAP
         )
+
+    def _initialize_ast_chunkers(self) -> dict:
+        """Initialize ASTChunkBuilder for each supported language"""
+        if not self.config.USE_AST_CHUNKING:
+            logger.info("AST chunking disabled via configuration")
+            return {}
+        
+        try:
+            from astchunk import ASTChunkBuilder
+        except ImportError:
+            logger.warning("astchunk not available, falling back to character chunking")
+            return {}
+
+        chunkers = {}
+        language_map = {
+            ".py": "python",
+            ".java": "java",
+            ".cs": "c_sharp",
+            ".ts": "typescript",
+            ".tsx": "typescript",
+        }
+        
+        for ext, language in language_map.items():
+            try:
+                chunkers[ext] = ASTChunkBuilder(
+                    max_chunk_size=self.config.AST_CHUNK_SIZE,
+                    language=language,
+                    metadata_template="default"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to initialize AST chunker for {language}: {e}")
+        
+        if chunkers:
+            logger.info(f"Initialized AST chunkers for: {list(chunkers.keys())}")
+        
+        return chunkers
 
     def _setup_collection(self) -> QdrantVectorStore:
         if not self.qdrant.collection_exists(self.config.QDRANT_COLLECTION):
@@ -214,14 +256,22 @@ class Indexer:
         return language_map.get(ext.lower(), 'unknown')
 
     def _process_file(self, loader) -> List[str]:
+        file_path = loader.file_path
+        file_ext = Path(file_path).suffix.lower()
+        
+        # Use AST chunking for code files if enabled
+        if (self.config.USE_AST_CHUNKING and 
+            file_ext in self.config.CODE_EXTENSIONS and 
+            self.ast_chunkers):
+            return self._process_code_file(loader, file_ext)
+        
+        # Existing logic for documents
         try:
             documents = loader.load_and_split(self.text_splitter)
             if not documents:
                 logger.warning(f"No documents loaded from {loader.file_path}")
                 return []
 
-            file_path = loader.file_path
-            file_ext = Path(file_path).suffix.lower()
             total_chunks = len(documents)
 
             # Phase 2: Add classification metadata
@@ -263,6 +313,136 @@ class Indexer:
 
         except Exception as e:
             logger.error(f"Error processing file {loader.file_path}: {str(e)}")
+            return []
+
+    def _process_code_file(self, loader, file_ext: str) -> List[str]:
+        """Process code files with AST-aware chunking"""
+        file_path = loader.file_path
+        
+        try:
+            # Read file content
+            with open(file_path, 'r', encoding='utf-8') as f:
+                code = f.read()
+            
+            if not code.strip():
+                logger.warning(f"Empty code file: {file_path}")
+                return []
+
+            # Get appropriate chunker
+            chunker = self.ast_chunkers.get(file_ext)
+            if not chunker:
+                # Fallback to regular chunking
+                logger.warning(f"No AST chunker for {file_ext}, using character chunking")
+                return self._process_file_fallback(loader, file_ext)
+
+            # Chunk using AST
+            chunks = chunker.chunkify(
+                code,
+                repo_level_metadata={"filepath": file_path},
+                chunk_expansion=True  # Adds filepath + class/function context
+            )
+            
+            if not chunks:
+                logger.warning(f"No chunks generated from AST for {file_path}")
+                return []
+
+            # Convert to LangChain Document format
+            from langchain_core.documents import Document
+            
+            # Gather file-level metadata
+            file_type = self._classify_file_type(file_ext)
+            file_size = os.path.getsize(file_path)
+            modified_timestamp = int(os.path.getmtime(file_path))
+            modified_time = datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat()
+            directory = os.path.dirname(file_path)
+            language = self._detect_language(file_ext)
+            
+            total_chunks = len(chunks)
+            documents = []
+            
+            for idx, chunk in enumerate(chunks):
+                # Merge AST metadata with standard metadata
+                metadata = {
+                    # Phase 1 fields
+                    'file_path': file_path,
+                    'file_name': os.path.basename(file_path),
+                    'file_ext': file_ext,
+                    'chunk_index': idx,
+                    'total_chunks': total_chunks,
+                    
+                    # Phase 2 fields
+                    'file_type': file_type,
+                    'file_size': file_size,
+                    'modified_time': modified_time,
+                    'modified_timestamp': modified_timestamp,
+                    'directory': directory,
+                    'language': language,
+                    
+                    # AST-specific fields
+                    'chunking_method': 'ast',
+                    **chunk.get("metadata", {})
+                }
+                
+                doc = Document(
+                    page_content=chunk["content"],
+                    metadata=metadata
+                )
+                documents.append(doc)
+
+            # Store documents
+            uuids = [str(uuid.uuid4()) for _ in range(len(documents))]
+            ids = self.document_store.add_documents(documents=documents, ids=uuids)
+            
+            logger.info(f"Successfully processed {len(ids)} AST chunks from {file_path}")
+            return ids
+
+        except Exception as e:
+            logger.error(f"AST chunking failed for {file_path}: {e}, falling back to character chunking")
+            return self._process_file_fallback(loader, file_ext)
+    
+    def _process_file_fallback(self, loader, file_ext: str) -> List[str]:
+        """Fallback to character-based chunking for code files"""
+        try:
+            documents = loader.load_and_split(self.text_splitter)
+            if not documents:
+                return []
+            
+            file_path = loader.file_path
+            total_chunks = len(documents)
+            file_type = self._classify_file_type(file_ext)
+            file_size = os.path.getsize(file_path)
+            modified_timestamp = int(os.path.getmtime(file_path))
+            modified_time = datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat()
+            directory = os.path.dirname(file_path)
+            
+            for idx, doc in enumerate(documents):
+                metadata = {
+                    'file_path': file_path,
+                    'file_name': os.path.basename(file_path),
+                    'file_ext': file_ext,
+                    'chunk_index': idx,
+                    'total_chunks': total_chunks,
+                    'file_type': file_type,
+                    'file_size': file_size,
+                    'modified_time': modified_time,
+                    'modified_timestamp': modified_timestamp,
+                    'directory': directory,
+                    'chunking_method': 'character',
+                }
+                
+                if file_type == 'code':
+                    metadata['language'] = self._detect_language(file_ext)
+                
+                doc.metadata.update(metadata)
+            
+            uuids = [str(uuid.uuid4()) for _ in range(len(documents))]
+            ids = self.document_store.add_documents(documents=documents, ids=uuids)
+            
+            logger.info(f"Processed {len(ids)} chunks (character-based fallback) from {file_path}")
+            return ids
+            
+        except Exception as e:
+            logger.error(f"Fallback chunking also failed for {file_path}: {e}")
             return []
 
     def index(self, message: Dict[str, any]) -> None:
